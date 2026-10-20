@@ -3,7 +3,7 @@ package pl.merskip.qemu;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Shell-like argument parser without shell execution or interpolation. */
+/** Parse shell-like arguments without launching a shell. */
 public final class QemuArguments {
     private QemuArguments() {}
 
@@ -18,13 +18,13 @@ public final class QemuArguments {
                 current.append(c);
                 escape = false;
                 tokenStarted = true;
-            } else if (c == '\\' && quote != '\'') {
+            } else if (c == 92 && quote != 39) {
                 escape = true;
                 tokenStarted = true;
             } else if (quote != 0) {
                 if (c == quote) quote = 0;
                 else current.append(c);
-            } else if (c == '\'' || c == '"') {
+            } else if (c == 39 || c == 34) {
                 quote = c;
                 tokenStarted = true;
             } else if (Character.isWhitespace(c)) {

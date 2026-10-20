@@ -1,16 +1,12 @@
 <idea-plugin>
     <id>qemu</id>
     <name>QEMU for CLion</name>
-    <description>Plugin for CLion helps run of QEMU emulator.</description>
-    <version>1.1a</version>
-    <vendor email="merskip@gmail.com" url="https://github.com/merskip">Piotr Merski</vendor>
-
+    <version>2.0.0</version>
+    <description>Run QEMU virtual machines from CLion, including ARM Linux images and GDB stub support.</description>
+    <vendor url="https://github.com/toshaTikhonov/qemu-for-clion">QEMU for CLion contributors</vendor>
     <depends>com.intellij.modules.clion</depends>
-    <idea-version since-build="173"/>
-
     <extensions defaultExtensionNs="com.intellij">
         <configurationType implementation="pl.merskip.qemu.QemuConfigurationType"/>
         <programRunner implementation="pl.merskip.qemu.QemuRunner"/>
     </extensions>
-
 </idea-plugin>

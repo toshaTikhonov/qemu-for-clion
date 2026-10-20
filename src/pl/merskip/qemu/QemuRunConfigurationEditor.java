@@ -1,109 +1,70 @@
 package pl.merskip.qemu;
 
-import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory;
 import com.intellij.openapi.options.SettingsEditor;
-import com.intellij.openapi.project.Project;
-import com.intellij.openapi.ui.ComboBox;
-import com.intellij.openapi.ui.TextBrowseFolderListener;
-import com.intellij.openapi.ui.TextFieldWithBrowseButton;
-import com.intellij.ui.ListCellRendererWithRightAlignedComponent;
-import com.jetbrains.cidr.cpp.cmake.model.CMakeTarget;
-import com.jetbrains.cidr.cpp.execution.CMakeBuildConfigurationHelper;
-import org.jdesktop.swingx.combobox.ListComboBoxModel;
 import org.jetbrains.annotations.NotNull;
 
 import javax.swing.*;
-import java.util.List;
+import java.awt.*;
 
+/** Self-contained editor, without dependencies on CLion's internal CMake UI. */
 public class QemuRunConfigurationEditor extends SettingsEditor<QemuRunConfiguration> {
+    private final JPanel panel = new JPanel(new BorderLayout(8, 8));
+    private final JTextField executable = new JTextField();
+    private final JTextArea arguments = new JTextArea(9, 55);
+    private final JCheckBox enableGdb = new JCheckBox("Enable QEMU GDB server");
+    private final JTextField port = new JTextField("1234");
+    private final JCheckBox waitForDebugger = new JCheckBox("Pause CPU until debugger attaches (-S)");
 
-    private Project project;
-    private JPanel panel;
-    private TextFieldWithBrowseButton cdromFileField;
-    private JRadioButton cdromRadioBtn;
-    private JRadioButton cmakeTargetRadioBtn;
-    private ComboBox<CMakeTarget> cmakeTargetComboBox;
-    private JCheckBox enableGDBCheckBox;
-    private JTextField tcpPortField;
-    private JCheckBox waitForDebuggerCheckBox;
-    private TextFieldWithBrowseButton qemuCommandField;
-    private JCheckBox daemonizeCheckBox;
-
-    public QemuRunConfigurationEditor(Project project) {
-        this.project = project;
+    public QemuRunConfigurationEditor() {
+        JPanel fields = new JPanel(new GridBagLayout());
+        GridBagConstraints c = new GridBagConstraints();
+        c.insets = new Insets(4, 4, 4, 4);
+        c.fill = GridBagConstraints.HORIZONTAL;
+        c.weightx = 1;
+        c.gridx = 0;
+        c.gridy = 0;
+        fields.add(new JLabel("QEMU executable (absolute path or PATH command):"), c);
+        c.gridy++;
+        fields.add(executable, c);
+        c.gridy++;
+        fields.add(new JLabel("QEMU arguments (paths containing spaces must be quoted):"), c);
+        c.gridy++;
+        c.weighty = 1;
+        c.fill = GridBagConstraints.BOTH;
+        fields.add(new JScrollPane(arguments), c);
+        c.gridy++;
+        c.weighty = 0;
+        c.fill = GridBagConstraints.HORIZONTAL;
+        fields.add(enableGdb, c);
+        c.gridy++;
+        fields.add(new JLabel("GDB TCP port:"), c);
+        c.gridy++;
+        fields.add(port, c);
+        c.gridy++;
+        fields.add(waitForDebugger, c);
+        panel.add(fields, BorderLayout.CENTER);
     }
 
     @Override
-    protected void resetEditorFrom(@NotNull QemuRunConfiguration configuration) {
-        qemuCommandField.setText(configuration.getQemuCommand());
-        cdromFileField.setText(configuration.getCdromFile());
-        cmakeTargetComboBox.setSelectedItem(configuration.getCmakeTarget());
-
-        switch (configuration.getDiskImageSource()) {
-            case File:
-                cdromRadioBtn.setSelected(true);
-                break;
-            case CMakeTarget:
-                cmakeTargetRadioBtn.setSelected(true);
-                break;
-        }
-
-        enableGDBCheckBox.setSelected(configuration.isEnableGDB());
-        tcpPortField.setText(String.valueOf(configuration.getTcpPort()));
-        waitForDebuggerCheckBox.setSelected(configuration.isWaitForDebugger());
-        daemonizeCheckBox.setSelected(configuration.isDeamonize());
+    protected void resetEditorFrom(@NotNull QemuRunConfiguration cfg) {
+        executable.setText(cfg.getQemuCommand());
+        arguments.setText(cfg.getArguments());
+        enableGdb.setSelected(cfg.isEnableGDB());
+        port.setText(Integer.toString(cfg.getTcpPort()));
+        waitForDebugger.setSelected(cfg.isWaitForDebugger());
     }
 
     @Override
-    protected void applyEditorTo(@NotNull QemuRunConfiguration configuration) {
-        configuration.setQemuCommand(qemuCommandField.getText());
-        configuration.setCdromFile(cdromFileField.getText());
-        configuration.setCmakeTarget((CMakeTarget) cmakeTargetComboBox.getSelectedItem());
-
-        if (cdromRadioBtn.isSelected()) {
-            configuration.setDiskImageSource(QemuRunConfiguration.DiskImageSource.File);
-        }
-        else if (cmakeTargetRadioBtn.isSelected()) {
-            configuration.setDiskImageSource(QemuRunConfiguration.DiskImageSource.CMakeTarget);
-        }
-
-        configuration.setEnableGDB(enableGDBCheckBox.isSelected());
-        try {
-            configuration.setTcpPort(Integer.parseInt(tcpPortField.getText()));
-        } catch (NumberFormatException e) {
-            // Nothing, just no change port in model
-        }
-        configuration.setWaitForDebugger(waitForDebuggerCheckBox.isSelected());
-        configuration.setDeamonize(daemonizeCheckBox.isSelected());
+    protected void applyEditorTo(@NotNull QemuRunConfiguration cfg) {
+        cfg.setQemuCommand(executable.getText().trim());
+        cfg.setArguments(arguments.getText());
+        cfg.setEnableGDB(enableGdb.isSelected());
+        try { cfg.setTcpPort(Integer.parseInt(port.getText().trim())); }
+        catch (NumberFormatException e) { cfg.setTcpPort(-1); }
+        cfg.setWaitForDebugger(waitForDebugger.isSelected());
     }
 
     @NotNull
     @Override
-    protected JComponent createEditor() {
-        qemuCommandField.addBrowseFolderListener(
-                new TextBrowseFolderListener(FileChooserDescriptorFactory.createSingleLocalFileDescriptor(), project)
-        );
-        cdromFileField.addBrowseFolderListener(
-                new TextBrowseFolderListener(FileChooserDescriptorFactory.createSingleFileDescriptor(), project)
-        );
-
-        List<CMakeTarget> targets = new CMakeBuildConfigurationHelper(project).getTargets();
-        //noinspection unchecked
-        cmakeTargetComboBox.setModel(new ListComboBoxModel<>(targets));
-        //noinspection unchecked,GtkPreferredJComboBoxRenderer
-        cmakeTargetComboBox.setRenderer(new CMakeTargetCellRenderer());
-
-        return panel;
-    }
-
-    class CMakeTargetCellRenderer extends ListCellRendererWithRightAlignedComponent<CMakeTarget> {
-
-        @Override
-        protected void customize(CMakeTarget cMakeTarget) {
-            if (cMakeTarget != null) {
-                setIcon(cMakeTarget.getIcon());
-                setLeftText(cMakeTarget.getName());
-            }
-        }
-    }
+    protected JComponent createEditor() { return panel; }
 }

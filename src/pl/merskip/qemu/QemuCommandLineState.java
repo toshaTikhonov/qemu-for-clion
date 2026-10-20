@@ -1,44 +1,20 @@
 package pl.merskip.qemu;
 
 import com.intellij.execution.ExecutionException;
-import com.intellij.execution.RunnerAndConfigurationSettings;
 import com.intellij.execution.configurations.CommandLineState;
 import com.intellij.execution.configurations.GeneralCommandLine;
-import com.intellij.execution.process.*;
+import com.intellij.execution.process.ProcessHandler;
+import com.intellij.execution.process.ProcessHandlerFactory;
 import com.intellij.execution.runners.ExecutionEnvironment;
-import com.intellij.openapi.util.Key;
-import com.jetbrains.cidr.cpp.cmake.model.CMakeConfiguration;
-import com.jetbrains.cidr.cpp.cmake.model.CMakeTarget;
-import com.jetbrains.cidr.cpp.execution.CMakeBuildConfigurationHelper;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.util.Optional;
-import java.util.Scanner;
+import java.util.List;
 
+/** Starts and owns a QEMU process; stopping the run configuration stops QEMU. */
 public class QemuCommandLineState extends CommandLineState {
+    private final QemuRunConfiguration configuration;
 
-    private QemuRunConfiguration configuration;
-
-    private ProcessHandler mainProcess;
-    private ProcessHandler cmakeProcess;
-    private ProcessHandler qemuProcess;
-
-    private boolean processFailure = false;
-
-    private static File qemuPidFile;
-
-    static {
-        try {
-            qemuPidFile = File.createTempFile("clion-qemu-", ".pid");
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
-    protected QemuCommandLineState(ExecutionEnvironment environment, QemuRunConfiguration configuration) {
+    public QemuCommandLineState(ExecutionEnvironment environment, QemuRunConfiguration configuration) {
         super(environment);
         this.configuration = configuration;
     }
@@ -46,147 +22,25 @@ public class QemuCommandLineState extends CommandLineState {
     @NotNull
     @Override
     protected ProcessHandler startProcess() throws ExecutionException {
-        if (isSingleton()) {
-            killPreviousQemuProcess();
-        }
-
-        mainProcess = new NopProcessHandler() {
-
-            @Override
-            protected void destroyProcessImpl() {
-                destroyBothProcess();
-                notifyProcessTerminated(processFailure ? 1 : 0);
-            }
-
-            private void destroyBothProcess() {
-                if (cmakeProcess != null && !cmakeProcess.isProcessTerminated()) {
-                    cmakeProcess.destroyProcess();
-                }
-                if (qemuProcess != null && !qemuProcess.isProcessTerminated()) {
-                    qemuProcess.destroyProcess();
-                }
-            }
-        };
-
-        switch (configuration.getDiskImageSource()) {
-            case File:
-                onDiskImageReady(new File(configuration.getCdromFile()));
-                break;
-            case CMakeTarget:
-                cmakeProcess = startBuildCMake();
-                break;
-        }
-
-        return mainProcess;
-    }
-
-    private void onDiskImageReady(File diskImage) {
-        GeneralCommandLine commandLine = createRunQemuCommandLine(diskImage);
-
+        final List<String> args;
         try {
-            qemuProcess = ProcessHandlerFactory.getInstance().createProcessHandler(commandLine);
-            qemuProcess.addProcessListener(new ProcessAdapter() {
-                @Override
-                public void processTerminated(@NotNull ProcessEvent event) {
-                    if (event.getExitCode() != 0) {
-                        onProcessFailure();
-                    }
-                    else {
-                        mainProcess.destroyProcess();
-                    }
-                }
-
-                @Override
-                public void onTextAvailable(@NotNull ProcessEvent event, @NotNull Key outputType) {
-                    super.onTextAvailable(event, outputType);
-                    mainProcess.notifyTextAvailable(event.getText(), outputType);
-                }
-            });
-
-            qemuProcess.startNotify(); // Without this events for process listener will not perform. Is it bug?
-        } catch (ExecutionException e) {
-            e.printStackTrace();
-            onProcessFailure();
+            args = QemuArguments.parse(configuration.getArguments());
+        } catch (IllegalArgumentException e) {
+            throw new ExecutionException("Invalid QEMU arguments: " + e.getMessage(), e);
         }
-    }
-
-    private void onProcessFailure() {
-        processFailure = true;
-
-        if (qemuProcess != null) {
-            qemuProcess.destroyProcess();
-        }
-        mainProcess.destroyProcess();
-    }
-
-    private ProcessHandler startBuildCMake() throws ExecutionException {
-        CMakeTarget cmakeTarget = configuration.getCmakeTarget();
-        if (cmakeTarget == null) {
-            throw new ExecutionException("No selected CMake target");
-        }
-        CMakeBuildConfigurationHelper configurationHelper = new CMakeBuildConfigurationHelper(getEnvironment().getProject());
-        CMakeConfiguration configuration = configurationHelper.getDefaultConfiguration(cmakeTarget);
-        if (configuration == null) {
-            throw new ExecutionException("No found CMake configuration for selected target");
-        }
-
-        CMakeBuildProcess process = new CMakeBuildProcess(getEnvironment().getProject(), configuration);
-        process.addProcessListener(new ProcessAdapter() {
-
-            @Override
-            public void processTerminated(@NotNull ProcessEvent event) {
-                if (event.getExitCode() != 0) {
-                    onProcessFailure();
-                    return;
-                }
-
-                onDiskImageReady(configuration.getProductFile());
-            }
-        });
-        return process;
-    }
-
-
-    private GeneralCommandLine createRunQemuCommandLine(File diskImageFile) {
         GeneralCommandLine commandLine = new GeneralCommandLine(configuration.getQemuCommand());
-        commandLine.addParameters("-cdrom", diskImageFile.getAbsolutePath());
-
+        commandLine.addParameters(args);
+        // Compatibility with legacy configurations that selected an ISO instead of free-form arguments.
+        if (configuration.getArguments().isBlank() && !configuration.getCdromFile().isBlank()) {
+            commandLine.addParameters("-cdrom", configuration.getCdromFile());
+        }
         if (configuration.isEnableGDB()) {
-            commandLine.addParameters("-gdb", "tcp::" + configuration.getTcpPort());
-            if (configuration.isWaitForDebugger()) {
-                commandLine.addParameter("-S");
-            }
-            if (configuration.isDeamonize()) {
-                commandLine.addParameter("-daemonize");
-            }
+            int port = configuration.getTcpPort();
+            if (port < 1 || port > 65535) throw new ExecutionException("Invalid GDB TCP port: " + port);
+            commandLine.addParameters("-gdb", "tcp:127.0.0.1:" + port);
+            if (configuration.isWaitForDebugger()) commandLine.addParameter("-S");
         }
-        commandLine.addParameters("-pidfile", qemuPidFile.getAbsolutePath());
-        return commandLine;
-    }
-
-    private void killPreviousQemuProcess() {
-        Optional<Integer> pid = readQemuPid();
-        pid.ifPresent(OSProcessUtil::killProcess);
-    }
-
-    private Optional<Integer> readQemuPid() {
-        try {
-            Scanner scanner = new Scanner(qemuPidFile);
-
-            if (scanner.hasNextInt()) {
-                return Optional.of(scanner.nextInt());
-            }
-            else {
-                return Optional.empty();
-            }
-        }
-        catch (FileNotFoundException e) {
-            return Optional.empty();
-        }
-    }
-
-    private boolean isSingleton() {
-        RunnerAndConfigurationSettings configurationSettings = getEnvironment().getRunnerAndConfigurationSettings();
-        return configurationSettings != null && configurationSettings.isSingleton();
+        // Intentionally avoid -daemonize and a shared PID file: the IDE owns this process.
+        return ProcessHandlerFactory.getInstance().createColoredProcessHandler(commandLine);
     }
 }

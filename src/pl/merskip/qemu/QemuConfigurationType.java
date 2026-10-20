@@ -8,9 +8,8 @@ import com.intellij.openapi.project.Project;
 import org.jetbrains.annotations.NotNull;
 
 public class QemuConfigurationType extends ConfigurationTypeBase {
-
-    protected QemuConfigurationType() {
-        super("qemu", "QEMU", "QEMU support configuration", AllIcons.RunConfigurations.Application);
+    public QemuConfigurationType() {
+        super("qemu", "QEMU", "Run a QEMU virtual machine", AllIcons.RunConfigurations.Application);
         addFactory(new ConfigurationFactory(this) {
             @NotNull
             @Override
